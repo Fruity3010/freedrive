@@ -1,0 +1,211 @@
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { loadCity } from './road.js';
+import { spawnCars } from './road.js'
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87CEEB); // Sky blue
+scene.fog = new THREE.Fog(0x87CEEB, 10, 1000);
+
+// Camera - diagonal top view
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+camera.position.set(-15, 20, -15);
+camera.lookAt(0, 0, 0);
+const hemiLight = new THREE.HemisphereLight(0xffffbb, 0x080820, 1);
+scene.add(hemiLight);
+
+// Renderer
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+// Lighting
+const ambientLight = new THREE.AmbientLight(0x404040);
+scene.add(ambientLight);
+
+const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+directionalLight.position.set(10, 20, 10);
+directionalLight.castShadow = true;
+directionalLight.shadow.mapSize.width = 2048;
+directionalLight.shadow.mapSize.height = 2048;
+scene.add(directionalLight);
+
+// Ground
+const groundGeometry = new THREE.PlaneGeometry(1000, 1000);
+const groundMaterial = new THREE.MeshStandardMaterial({ 
+    color: 0x3a5f0b,
+    roughness: 0.8,
+    metalness: 0.2
+});
+const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+ground.position.y = -0.01; // Prevents road and ground z-fighting
+
+scene.add(ground);
+function createWall(x, z, width, height, depth) {
+  const wallGeometry = new THREE.BoxGeometry(width, height, depth);
+  const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x888888 });
+  const wall = new THREE.Mesh(wallGeometry, wallMaterial);
+  wall.position.set(x, height / 2, z); // raise to ground level
+  wall.castShadow = true;
+  wall.receiveShadow = true;
+  scene.add(wall);
+}
+
+// Wall dimensions
+const wallThickness = 2;
+const wallHeight = 10;
+const halfSize = 500; // since ground is 1000x1000
+
+// Create walls on all 4 sides
+createWall(0, -halfSize + wallThickness / 2, 1000, wallHeight, wallThickness); // North
+createWall(0, halfSize - wallThickness / 2, 1000, wallHeight, wallThickness);  // South
+createWall(-halfSize + wallThickness / 2, 0, wallThickness, wallHeight, 1000); // West
+createWall(halfSize - wallThickness / 2, 0, wallThickness, wallHeight, 1000);  // East
+
+loadCity(scene);
+spawnCars(scene, 10);
+// Car placeholder (will be removed after model loads)
+const carGeometry = new THREE.BoxGeometry(3, 1, 5);
+const carMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+const car = new THREE.Mesh(carGeometry, carMaterial);
+car.position.y = 0.5;
+car.castShadow = true;
+scene.add(car);
+
+// Load GLB car model and replace the box car
+const loader = new GLTFLoader();
+loader.load(
+  'models/sedan_car_gltf/scene.gltf',
+  (gltf) => {
+    const carModel = gltf.scene;
+    carModel.scale.set(0.01, 0.01, 0.01); // Adjust scale
+    carModel.position.copy(car.position);
+
+    // Enable shadows for all meshes in the model
+    carModel.traverse((child) => {
+      if (child.isMesh) {
+        child.castShadow = true;
+      }
+    });
+
+    scene.remove(car);
+    scene.add(carModel);
+
+    // Update car state with the loaded model
+    carState.modelRoot = carModel;
+  },
+  undefined,
+  (error) => {
+    console.error('Error loading car model:', error);
+  }
+);
+
+// Trees
+function createTree(x, z) {
+    const trunkGeometry = new THREE.CylinderGeometry(0.2, 0.2, 2);
+    const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x8B4513 });
+    const trunk = new THREE.Mesh(trunkGeometry, trunkMaterial);
+    trunk.position.set(x, 1, z);
+    trunk.castShadow = true;
+    
+    const leavesGeometry = new THREE.SphereGeometry(1.5, 16, 16);
+    const leavesMaterial = new THREE.MeshStandardMaterial({ color: 0x228B22 });
+    const leaves = new THREE.Mesh(leavesGeometry, leavesMaterial);
+    leaves.position.set(x, 3, z);
+    leaves.castShadow = true;
+    
+    scene.add(trunk);
+    scene.add(leaves);
+}
+
+// Add some trees
+for (let i = 0; i < 50; i++) {
+    const x = (Math.random() - 0.5) * 500;
+    const z = (Math.random() - 0.5) * 500;
+    createTree(x, z);
+}
+
+// Controls
+const keys = {
+    ArrowUp: false,
+    ArrowDown: false,
+    ArrowLeft: false,
+    ArrowRight: false
+};
+
+document.addEventListener('keydown', (event) => {
+    if (keys.hasOwnProperty(event.key)) {
+        keys[event.key] = true;
+    }
+});
+
+document.addEventListener('keyup', (event) => {
+    if (keys.hasOwnProperty(event.key)) {
+        keys[event.key] = false;
+    }
+});
+
+// Game state
+const carState = {
+    speed: 0,
+    maxSpeed: 1.2,
+    acceleration: 0.005,
+    deceleration: 0.038,
+    turnSpeed: 0.02,
+    direction: new THREE.Vector3(0, 0, -1),
+    modelRoot: null  // Will hold the loaded car model
+};
+
+// Game loop
+function animate() {
+    requestAnimationFrame(animate);
+
+    const activeCar = carState.modelRoot || car; // Use model if loaded, otherwise use placeholder
+
+    // Movement controls
+    if (keys.ArrowUp) {
+        carState.speed = Math.min(carState.speed + carState.acceleration, carState.maxSpeed);
+    } else if (keys.ArrowDown) {
+        carState.speed = Math.max(carState.speed - carState.acceleration, -carState.maxSpeed * 0.5);
+    } else {
+        // Decelerate when no keys pressed
+        if (carState.speed > 0) {
+            carState.speed = Math.max(0, carState.speed - carState.deceleration);
+        } else if (carState.speed < 0) {
+            carState.speed = Math.min(0, carState.speed + carState.deceleration);
+        }
+    }
+
+    // Steering
+    if (keys.ArrowLeft && Math.abs(carState.speed) > 0.01) {
+        activeCar.rotation.y += carState.turnSpeed * (carState.speed > 0 ? 1 : -1);
+    }
+    if (keys.ArrowRight && Math.abs(carState.speed) > 0.01) {
+        activeCar.rotation.y -= carState.turnSpeed * (carState.speed > 0 ? 1 : -1);
+    }
+
+    // Update car position
+    carState.direction.set(0, 0, 1).applyQuaternion(activeCar.quaternion);
+    activeCar.position.add(carState.direction.clone().multiplyScalar(carState.speed));
+
+    // Update camera
+    camera.position.copy(activeCar.position);
+    camera.position.x += -12;
+    camera.position.y += 100;
+    camera.position.z += 12;
+    camera.lookAt(activeCar.position);
+
+    renderer.render(scene, camera);
+}
+
+// Handle window resize
+window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// Start the game
+animate();
