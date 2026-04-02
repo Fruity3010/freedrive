@@ -1,7 +1,28 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { loadCity } from './road.js';
-import { spawnCars } from './road.js'
+import { LoadingScreen } from './ui/LoadingScreen.js';
+import { HUD } from './ui/HUD.js';
+import { GameManager } from './GameManager.js';
+
+// Initialize loading screen and game manager
+const loadingScreen = new LoadingScreen();
+const gameManager = new GameManager();
+let hud = null;
+
+// Loading manager
+const loadingManager = new THREE.LoadingManager();
+loadingManager.onProgress = (url, itemsLoaded, itemsTotal) => {
+    const progress = itemsLoaded / itemsTotal;
+    loadingScreen.updateProgress(progress);
+};
+loadingManager.onLoad = () => {
+    setTimeout(() => {
+        loadingScreen.hide();
+        if (hud) hud.show();
+    }, 500);
+};
+
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87CEEB); // Sky blue
 scene.fog = new THREE.Fog(0x87CEEB, 10, 1000);
@@ -26,8 +47,9 @@ scene.add(ambientLight);
 const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
 directionalLight.position.set(10, 20, 10);
 directionalLight.castShadow = true;
-directionalLight.shadow.mapSize.width = 2048;
-directionalLight.shadow.mapSize.height = 2048;
+directionalLight.shadow.mapSize.width = 1024;  // Reduced for performance
+directionalLight.shadow.mapSize.height = 1024; // Reduced for performance
+directionalLight.shadow.camera.far = 100;
 scene.add(directionalLight);
 
 // Ground
@@ -64,8 +86,12 @@ createWall(0, halfSize - wallThickness / 2, 1000, wallHeight, wallThickness);  /
 createWall(-halfSize + wallThickness / 2, 0, wallThickness, wallHeight, 1000); // West
 createWall(halfSize - wallThickness / 2, 0, wallThickness, wallHeight, 1000);  // East
 
+// Initialize HUD
+hud = new HUD();
+hud.hide(); // Hide until assets load
+
 loadCity(scene);
-spawnCars(scene, 10);
+
 // Car placeholder (will be removed after model loads)
 const carGeometry = new THREE.BoxGeometry(3, 1, 5);
 const carMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
@@ -74,8 +100,8 @@ car.position.y = 0.5;
 car.castShadow = true;
 scene.add(car);
 
-// Load GLB car model and replace the box car
-const loader = new GLTFLoader();
+// Load GLB car model and replace the box car (with loading manager)
+const loader = new GLTFLoader(loadingManager);
 loader.load(
   'models/sedan_car_gltf/scene.gltf',
   (gltf) => {
@@ -120,8 +146,8 @@ function createTree(x, z) {
     scene.add(leaves);
 }
 
-// Add some trees
-for (let i = 0; i < 50; i++) {
+// Add some trees (reduced for performance)
+for (let i = 0; i < 20; i++) {
     const x = (Math.random() - 0.5) * 500;
     const z = (Math.random() - 0.5) * 500;
     createTree(x, z);
@@ -155,14 +181,143 @@ const carState = {
     deceleration: 0.038,
     turnSpeed: 0.02,
     direction: new THREE.Vector3(0, 0, -1),
-    modelRoot: null  // Will hold the loaded car model
+    modelRoot: null,  // Will hold the loaded car model
+    boundingBox: new THREE.Box3()
 };
 
+// Zombie class
+class Zombie {
+    constructor(scene, carState) {
+        this.scene = scene;
+        this.carState = carState;
+        this.model = null;
+        this.mixer = null;
+        this.speed = THREE.MathUtils.randFloat(2.0, 3.5);
+        this.boundingBox = new THREE.Box3();
+        this.isAttacked = false;
+        this.velocity = new THREE.Vector3();
+
+        this.loadModel();
+    }
+
+    loadModel() {
+        const loader = new GLTFLoader(loadingManager);
+        loader.load('models/zombie_number_10_animated_gltf/Untitled.glb', (gltf) => {
+            this.model = gltf.scene;
+            this.model.scale.set(1, 1, 1);
+            const carPosition = this.carState.modelRoot ? this.carState.modelRoot.position : car.position;
+            this.model.position.set(
+                carPosition.x + (Math.random() - 0.5) * 100,
+                0,
+                carPosition.z + (Math.random() - 0.5) * 100
+            );
+            this.model.traverse((child) => {
+                if (child.isMesh) {
+                    child.castShadow = true;
+                    child.receiveShadow = true;
+                }
+            });
+
+            this.mixer = new THREE.AnimationMixer(this.model);
+            const runAnimation = this.mixer.clipAction(gltf.animations[8]); // Run animation
+            runAnimation.play();
+
+            this.scene.add(this.model);
+            this.boundingBox.setFromObject(this.model);
+        });
+    }
+
+    update(delta) {
+        if (!this.model) return;
+
+        // Apply velocity decay
+        if (this.velocity.lengthSq() > 0.0001) {
+            this.model.position.add(this.velocity.clone().multiplyScalar(delta));
+            this.velocity.multiplyScalar(0.9);
+        }
+
+        if (this.mixer) this.mixer.update(delta);
+        this.boundingBox.setFromObject(this.model);
+
+        // Chase the car
+        if (!this.isAttacked) {
+            const carPosition = this.carState.modelRoot ? this.carState.modelRoot.position : car.position;
+            const direction = new THREE.Vector3().subVectors(carPosition, this.model.position);
+            const distance = direction.length();
+            direction.normalize();
+
+            const lookAtPosition = carPosition.clone();
+            lookAtPosition.y = this.model.position.y;
+            this.model.lookAt(lookAtPosition);
+
+            if (distance > 2.0) {
+                this.model.position.add(direction.multiplyScalar(this.speed * delta));
+            } else {
+                // Attack range - damage player
+                if (Math.random() < 0.05) {
+                    gameManager.onZombieAttack();
+                }
+            }
+        }
+    }
+
+    handleCollision(carBoundingBox) {
+        if (this.isAttacked) return;
+        this.isAttacked = true;
+
+        gameManager.onZombieHit();
+
+        // Push zombie away
+        const pushDirection = new THREE.Vector3().subVectors(
+            this.model.position,
+            carBoundingBox.getCenter(new THREE.Vector3())
+        ).normalize();
+        this.velocity.add(pushDirection.multiplyScalar(5));
+
+        setTimeout(() => {
+            this.isAttacked = false;
+        }, 300);
+    }
+}
+
+// Spawn 10 zombies (reduced for performance)
+const zombies = [];
+for (let i = 0; i < 10; i++) {
+    zombies.push(new Zombie(scene, carState));
+}
+
 // Game loop
+const clock = new THREE.Clock();
 function animate() {
     requestAnimationFrame(animate);
 
+    const delta = clock.getDelta();
     const activeCar = carState.modelRoot || car; // Use model if loaded, otherwise use placeholder
+
+    // Update game manager
+    gameManager.update(delta);
+
+    // Update HUD
+    if (hud) {
+        hud.updateHealth(gameManager.health, gameManager.maxHealth);
+        hud.updateScore(gameManager.score);
+        hud.updateTime(gameManager.survivalTime);
+    }
+
+    // Update car bounding box
+    if (carState.modelRoot) {
+        carState.boundingBox.setFromObject(carState.modelRoot);
+    }
+
+    // Update zombies and check collisions
+    zombies.forEach(zombie => {
+        zombie.update(delta);
+        if (zombie.model && carState.modelRoot && !zombie.isAttacked) {
+            if (carState.boundingBox.intersectsBox(zombie.boundingBox)) {
+                zombie.handleCollision(carState.boundingBox);
+            }
+        }
+    });
 
     // Movement controls
     if (keys.ArrowUp) {
