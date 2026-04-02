@@ -14,6 +14,7 @@
   "dependencies": {
     "@react-three/drei": "^9.120.5",
     "@react-three/fiber": "^8.17.10",
+    "lil-gui": "^0.20.0",
     "three": "^0.166.1"
   }
 }
