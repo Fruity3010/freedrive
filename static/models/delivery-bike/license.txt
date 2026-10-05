@@ -1,0 +1,11 @@
+Model Information:
+* title:	Checkers Sixty60 Bike
+* source:	https://sketchfab.com/3d-models/checkers-sixty60-bike-4aabf2a85abd43f98fc4e5f2a5ae62f1
+* author:	Caitlin Pillay (https://sketchfab.com/caitlin_pillay)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Checkers Sixty60 Bike" (https://sketchfab.com/3d-models/checkers-sixty60-bike-4aabf2a85abd43f98fc4e5f2a5ae62f1) by Caitlin Pillay (https://sketchfab.com/caitlin_pillay) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
